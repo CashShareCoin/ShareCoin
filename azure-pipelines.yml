@@ -7,7 +7,7 @@ trigger:
 - master
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'windows-latest'
 
 steps:
 - script: echo Hello, world!
@@ -17,5 +17,5 @@ steps:
   inputs:
     command: 'publish'
     publishWebProjects: false
-    projects: './/updater//updater.csproj'
+    projects: 'sharecash\sharecash.csproj'
     arguments: '-c Release'
