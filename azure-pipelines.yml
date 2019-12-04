@@ -13,7 +13,7 @@ steps:
 - script: echo Hello, world!
   displayName: 'Run a one-line script'
 
-- task: DotNetCoreCLI@3
+- task: DotNetCoreCLI@3.x
   inputs:
     command: 'publish'
     publishWebProjects: false
