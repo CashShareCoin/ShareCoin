@@ -61,16 +61,6 @@ namespace Installer {
         }
         
         /// <summary>
-        ///   Looks up a localized resource of type System.Byte[].
-        /// </summary>
-        internal static byte[] dotnetcore_desktop_runtime_install_0_0_0 {
-            get {
-                object obj = ResourceManager.GetObject("dotnetcore_desktop_runtime_install_0_0_0", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to # =====================================================================
         ///# Copyright 2017 - Present Chocolatey Software, Inc, and the
         ///# original authors/contributors from ChocolateyGallery
@@ -110,9 +100,9 @@ namespace Installer {
         /// <summary>
         ///   Looks up a localized resource of type System.Byte[].
         /// </summary>
-        internal static byte[] sharecash_0_2_2 {
+        internal static byte[] sharecash_0_2_3 {
             get {
-                object obj = ResourceManager.GetObject("sharecash_0_2_2", resourceCulture);
+                object obj = ResourceManager.GetObject("sharecash_0_2_3", resourceCulture);
                 return ((byte[])(obj));
             }
         }

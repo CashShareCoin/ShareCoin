@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,7 +26,7 @@ namespace ShareCash
 
             try
             {
-                Log.Information("Starting up the service - 6");
+                Log.Information($"Starting up the service - {Assembly.GetExecutingAssembly().GetName().Version}");
                 CreateHostBuilder(args).Build().Run();
                 return;
             }

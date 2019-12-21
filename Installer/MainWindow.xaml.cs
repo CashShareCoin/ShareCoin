@@ -50,15 +50,13 @@ namespace ShareCoin
             var script = Installer.Resource1.installChocolatey.Replace(@".\install.ps1", $@"""{psScriptPath}""");
             var xplotterPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.xplotter_1_31_0).Replace('_', '.')}.nupkg");
             var scavengerPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.scavenger_1_7_8).Replace('_', '.')}.nupkg");
-            var dotnetCoreDesktopPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.dotnetcore_desktop_runtime_install_0_0_0).Replace("dotnetcore_desktop_", "dotnetcore-desktop-").Replace("runtime_install", "runtime.install").Replace('_', '.')}.nupkg");
-            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_2).Replace('_', '.')}.nupkg");
+            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_3).Replace('_', '.')}.nupkg");
 
             File.WriteAllText(installScriptPath, script);
             File.WriteAllText(psScriptPath, Installer.Resource1.install);
             File.WriteAllBytes(xplotterPackagePath, Installer.Resource1.xplotter_1_31_0);
             File.WriteAllBytes(scavengerPackagePath, Installer.Resource1.scavenger_1_7_8);
-            File.WriteAllBytes(dotnetCoreDesktopPackagePath, Installer.Resource1.dotnetcore_desktop_runtime_install_0_0_0);
-            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_2);
+            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_3);
 
             using var chocolateyInstallProc = new Process
             {

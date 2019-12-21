@@ -118,9 +118,6 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <assembly alias="System.Windows.Forms" name="System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" />
-  <data name="dotnetcore_desktop_runtime_install_0_0_0" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>Resources\dotnetcore-desktop-runtime.install.0.0.0.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
   <data name="install" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>Resources\install.txt;System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089;Windows-1252</value>
   </data>
@@ -130,8 +127,8 @@
   <data name="scavenger_1_7_8" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>Resources\scavenger.1.7.8.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
-  <data name="sharecash_0_2_2" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>Resources\sharecash.0.2.2.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  <data name="sharecash_0_2_3" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>Resources\sharecash.0.2.3.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="xplotter_1_31_0" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>Resources\xplotter.1.31.0.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
