@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -14,7 +15,7 @@ namespace ShareCash
 {
     public static class BurstCoinMiner
     {
-        private static readonly Dictionary<DriveInfo, ActionBlock<(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGB, CancellationToken stoppingToken, TaskCompletionSource<object> plotCompletion)>> _plotQueue = new Dictionary<DriveInfo, ActionBlock<(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGB, CancellationToken stoppingToken, TaskCompletionSource<object> plotCompletion)>>();
+        private static readonly ConcurrentDictionary<DriveInfo, ActionBlock<(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGB, CancellationToken stoppingToken, TaskCompletionSource<object> plotCompletion)>> _plotQueue = new ConcurrentDictionary<DriveInfo, ActionBlock<(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGB, CancellationToken stoppingToken, TaskCompletionSource<object> plotCompletion)>>();
 
         private static ILogger _logger;
 
@@ -32,34 +33,42 @@ namespace ShareCash
                     new ActionBlock<(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGB, CancellationToken stoppingToken, TaskCompletionSource<object> plotCompletion)>(
                         async args =>
                         {
-                            var plot = PlotFileAsync(
-                                args.diskInfo, 
-                                args.accountNumber, 
-                                args.numberOfNonces,
-                                args.startingNonce, 
-                                args.plotDirectory,
-                                args.numberOfThreads,
-                                args.memoryGB,
-                                args.stoppingToken);
+                            try
+                            {
+                                var plot = PlotFileAsync(
+                                    args.diskInfo,
+                                    args.accountNumber,
+                                    args.numberOfNonces,
+                                    args.startingNonce,
+                                    args.plotDirectory,
+                                    args.numberOfThreads,
+                                    args.memoryGB,
+                                    args.stoppingToken);
 
-                            _ = plot.ContinueWith(t =>
-                                {
-                                    if (t.IsCanceled)
+                                _ = plot.ContinueWith(t =>
                                     {
-                                        args.plotCompletion.SetCanceled();
-                                    }
-                                    else if (t.IsFaulted)
-                                    {
-                                        args.plotCompletion.SetException(t.Exception);
-                                    }
-                                    else
-                                    {
-                                        args.plotCompletion.SetResult(t);
-                                    }
-                                }, 
-                                TaskContinuationOptions.RunContinuationsAsynchronously);
-                            
-                            await plot;
+                                        if (t.IsCanceled)
+                                        {
+                                            args.plotCompletion.SetCanceled();
+                                        }
+                                        else if (t.IsFaulted)
+                                        {
+                                            args.plotCompletion.SetException(t.Exception);
+                                        }
+                                        else
+                                        {
+                                            args.plotCompletion.SetResult(null);
+                                        }
+                                    },
+                                    TaskContinuationOptions.RunContinuationsAsynchronously);
+
+                                await plot;
+                            }
+                            catch (TaskCanceledException) { }
+                            catch (Exception e)
+                            {
+                                _logger.LogError(e, "failed during plot queue");
+                            }
                         }));
             }
 
@@ -75,7 +84,7 @@ namespace ShareCash
             _ = QueuePlotAsync(diskInfo, accountNumber, numberOfNonces, startingNonce, plotDirectory, numberOfThreads, memoryGb, stoppingToken);
         }
 
-        private static string GetXplotterAppName() => Avx2.IsSupported ? "XPlotter_avx2" : Avx.IsSupported ? "XPlotter_avx" : "XPlotter_sse";
+        public static string GetXplotterAppName() => Avx2.IsSupported ? "XPlotter_avx2" : Avx.IsSupported ? "XPlotter_avx" : "XPlotter_sse";
 
         private static async Task PlotFileAsync(DriveInfo diskInfo, ulong accountNumber, long numberOfNonces, long startingNonce, string plotDirectory, int numberOfThreads, long memoryGb, CancellationToken stopPlottingToken)
         {
@@ -96,10 +105,10 @@ namespace ShareCash
 
             if (proc.Start())
             {
-                stopPlottingToken.Register(() => { try { proc.Kill(); } catch (Exception) { } });
-
                 proc.PriorityClass = ProcessPriorityClass.Idle;
 
+                stopPlottingToken.Register(() => { try { proc.Kill(); } catch (Exception) { } });
+                
                 var logDelayTask = Task.Delay(10 * 1000, stopPlottingToken);
 
                 string standardOutput;

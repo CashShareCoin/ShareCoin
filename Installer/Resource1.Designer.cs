@@ -90,29 +90,9 @@ namespace Installer {
         /// <summary>
         ///   Looks up a localized resource of type System.Byte[].
         /// </summary>
-        internal static byte[] scavenger_1_7_8 {
+        internal static byte[] sharecash_0_2_4 {
             get {
-                object obj = ResourceManager.GetObject("scavenger_1_7_8", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized resource of type System.Byte[].
-        /// </summary>
-        internal static byte[] sharecash_0_2_3 {
-            get {
-                object obj = ResourceManager.GetObject("sharecash_0_2_3", resourceCulture);
-                return ((byte[])(obj));
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized resource of type System.Byte[].
-        /// </summary>
-        internal static byte[] xplotter_1_31_0 {
-            get {
-                object obj = ResourceManager.GetObject("xplotter_1_31_0", resourceCulture);
+                object obj = ResourceManager.GetObject("sharecash_0_2_4", resourceCulture);
                 return ((byte[])(obj));
             }
         }

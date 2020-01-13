@@ -18,8 +18,10 @@ using System.IO.Pipes;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.Intrinsics.X86;
 using System.Collections.Concurrent;
+using System.ComponentModel.DataAnnotations;
 using System.Management;
 using System.Diagnostics;
+using System.Reflection.Metadata;
 
 namespace ShareCash
 {
@@ -28,19 +30,34 @@ namespace ShareCash
         public const int DiskCapacityCheckInterval = 10 * 1000;
         private const string AppDirectoryName = "ShareCash";
         private const long TargetPoolCapacity = 150L * 1024 * 1024 * 1024 * 1024 * 1024;
-        private const long AverageIndividualCapacity = 60L * 1024 * 1024 * 1024;
+        private const long AverageMinerCapacity = 60L * 1024 * 1024 * 1024;
         private const int NonceSize = 262144;
-        private const int PlotFileNameNonceIndex = 1;
+        private const int PlotFileNameStartingNonceIndex = 1;
         private const int PlotFileNameNumberOfNoncesIndex = 2;
         private const ulong ShareCashAccountNumber = 12209047155150467438;
 
+        private static readonly string MineConfigFile = Path.GetTempFileName();
+
         private static ILogger _logger;
+        private static float _currentCpuUtilization;
 
         public static void SetLogger(ILogger log)
         {
             _logger = log;
 
             BurstCoinMiner.SetLogger(log);
+        }
+
+        private static async Task RunCpuMonitorAsync(CancellationToken stoppingToken)
+        {
+            var cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                _currentCpuUtilization = cpuCounter.NextValue();
+
+                await Task.Delay(1000, stoppingToken);
+            }
         }
 
         private static void RunAvailablePlotSpaceMonitor(DriveInfo[] disks, EventAggregator bus, CancellationToken stoppingToken)
@@ -87,7 +104,7 @@ namespace ShareCash
         private static async Task RunHighDiskUtilizationMonitorAsync(DriveInfo[] disks, EventAggregator bus, CancellationToken stoppingToken)
         {
             const int DriveInfoVolumeLetterIndex = 0;
-            const int MaxDiskQueueLength = 1;
+            const int MaxDiskQueueLengthWhilePlotting = 2;
 
             var performanceCounterCategories = PerformanceCounterCategory.GetCategories().ToArray();
             var diskPerformance = performanceCounterCategories.FirstOrDefault(c => c.CategoryName == "PhysicalDisk");
@@ -100,18 +117,85 @@ namespace ShareCash
             {
                 foreach (var (diskQueueLength, disk) in diskQueueLengthResults)
                 {
-                    if (diskQueueLength.RawValue > MaxDiskQueueLength)
+                    try
                     {
-                        bus.Publish(new HighDiskActivityNotification(disk));
+                        var diskPlot = Process.GetProcesses()
+                            .FirstOrDefault(proc => proc.ProcessName == BurstCoinMiner.GetXplotterAppName() && proc.GetCommandLine().Contains(GetIncompletePlotsDirectory(disk)));
+
+                        // if plotting & over max queue length then report high disk activity
+                        if (diskPlot != null && diskQueueLength.RawValue > MaxDiskQueueLengthWhilePlotting)
+                        {
+                            _logger.LogDebug($"*************************{disk} - high disk activity detected");
+                            bus.Publish(new HighDiskActivityNotification(disk));
+                        }
+                        // if not plotting & no disk activity for a certain time
+                        else if (diskPlot == null && await WaitForNoDiskActivityAsync(60 * 1000, diskQueueLength))
+                        {
+                            bus.Publish(new LowDiskActivityNotification(disk));
+                        }
                     }
-                    else
+                    catch (Exception e)
                     {
-                        bus.Publish(new LowDiskActivityNotification(disk));
+                        _logger.LogError(e, "error");
                     }
                 }
 
-                await Task.Delay(5000, stoppingToken);
+                await Task.Delay(1000, stoppingToken);
             }            
+        }
+
+        private static async Task<bool> WaitForNoDiskActivityAsync(int durationOfNoDiskActivity, PerformanceCounter diskQueueLength)
+        {
+            var cancelDueToTimeOut = new CancellationTokenSource();
+            var timeout = Task.Delay(durationOfNoDiskActivity);
+            var diskInactiveTask = Task.Run(async () =>
+            {
+                while (diskQueueLength.RawValue == 0)
+                {
+                    await Task.Delay(1000);
+                }
+            },
+            cancelDueToTimeOut.Token);
+
+            _ = timeout.ContinueWith(previousTask =>
+            {
+                cancelDueToTimeOut.Cancel();
+                cancelDueToTimeOut.Dispose();
+            });
+
+            // the disk was inactive the whole time if it was cancelled before reading any disk activity
+            return timeout == await Task.WhenAny(timeout, diskInactiveTask);
+        }
+
+        private static Task WaitForLowDiskActivityAsync(DriveInfo disk, EventAggregator bus, CancellationToken stoppingToken)
+        {
+            var tcs = new TaskCompletionSource<object>();
+
+            void OnLowDiskActivity(LowDiskActivityNotification e)
+            {
+                bus.Unsubscribe<LowDiskActivityNotification>(OnLowDiskActivity);
+
+                tcs.SetResult(null);
+            }
+
+            var cancellationRegistration = stoppingToken.Register(() =>
+            {
+                tcs.SetCanceled();
+            });
+
+            tcs.Task.ContinueWith(previousTask => cancellationRegistration.Dispose());
+
+            bus.Subscribe<LowDiskActivityNotification>(OnLowDiskActivity, e => e.Disk == disk);
+
+            return tcs.Task;
+        }
+
+        private static string GetCommandLine(this Process process)
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id);
+            using var objects = searcher.Get();
+           
+            return objects.Cast<ManagementBaseObject>().SingleOrDefault()?["CommandLine"]?.ToString() ?? string.Empty;
         }
 
         private static void RunPlotAvailabilityMonitor(DriveInfo disk, EventAggregator bus)
@@ -148,7 +232,7 @@ namespace ShareCash
                 PublishDiskAvailableForPlotting();
             }
 
-            void OnInsufficentPlotSpace(InsufficientPlotSpaceNotification e)
+            void OnInsufficientPlotSpace(InsufficientPlotSpaceNotification e)
             {
                 plotSpaceAvailable = false;
 
@@ -158,23 +242,17 @@ namespace ShareCash
             bus.Subscribe<HighDiskActivityNotification>(OnHighDiskUtilization, e => e.Disk == disk);
             bus.Subscribe<LowDiskActivityNotification>(OnLowDiskUtilization, e => e.Disk == disk);
             bus.GetEvent<PubSubEvent<AvailablePlotSpaceNotification>>().Subscribe(OnPlotSpaceAvailable, ThreadOption.PublisherThread, true, e => e.Disk == disk);
-            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficentPlotSpace, ThreadOption.PublisherThread, true, e => e.Disk == disk);
+            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficientPlotSpace, ThreadOption.PublisherThread, true, e => e.Disk == disk);
         }
 
         private static void RunDriveUnavailableForMiningMonitor(EventAggregator bus)
         {
-            void OnInsufficentPlotSpace(InsufficientPlotSpaceNotification e)
+            void OnInsufficientPlotSpace(InsufficientPlotSpaceNotification e)
             {
                 bus.GetEvent<PubSubEvent<MiningUnavailableForDriveNotification>>().Publish(new MiningUnavailableForDriveNotification(e.Disk));
             }
 
-            void OnPlottingInProgress(PlottingInProgressNotfication e)
-            {
-                bus.GetEvent<PubSubEvent<MiningUnavailableForDriveNotification>>().Publish(new MiningUnavailableForDriveNotification(e.Disk));
-            }
-
-            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficentPlotSpace, true);
-            bus.GetEvent<PubSubEvent<PlottingInProgressNotfication>>().Subscribe(OnPlottingInProgress, true);
+            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficientPlotSpace, true);
         }
 
         private static void StartMonitoredMining(EventAggregator bus, CancellationToken stoppingToken)
@@ -198,7 +276,7 @@ namespace ShareCash
 
             var disksToMine = new DriveInfo[0];
 
-            void OnPlottingCompleted(DiskPlotCompleteNotfication e)
+            void OnCompletedPlotFile(CompletedPlotFileNotification e)
             {
                 lock(sync)
                 {
@@ -227,7 +305,7 @@ namespace ShareCash
                 }
             }
 
-            bus.GetEvent<PubSubEvent<DiskPlotCompleteNotfication>>().Subscribe(OnPlottingCompleted, true);
+            bus.GetEvent<PubSubEvent<CompletedPlotFileNotification>>().Subscribe(OnCompletedPlotFile, true);
             bus.GetEvent<PubSubEvent<MiningUnavailableForDriveNotification>>().Subscribe(OnMiningUnavailableForDrive, true);
         }
 
@@ -238,9 +316,11 @@ namespace ShareCash
 
             void DestroyCancellationMonitor()
             {
-                bus.GetEvent<PubSubEvent<DiskPlotCompleteNotfication>>().Unsubscribe(OnDiskPlotCompleted);
+                _logger.LogDebug($"********{disk} - {nameof(DestroyCancellationMonitor)} - {cancelPlotting.GetHashCode()}");
+                
+                bus.GetEvent<PubSubEvent<CompletedPlotFileNotification>>().Unsubscribe(OnCompletedPlotFile);
                 bus.GetEvent<PubSubEvent<HighDiskActivityNotification>>().Unsubscribe(OnHighDiskUtilization);
-                bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Unsubscribe(OnInsufficentPlotSpace);
+                bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Unsubscribe(OnInsufficientPlotSpace);
 
                 cancelDueToInvalidPlottingState.Dispose();
                 cancelPlotting.Dispose();
@@ -248,30 +328,30 @@ namespace ShareCash
 
             void OnHighDiskUtilization(HighDiskActivityNotification e)
             {
-                _logger.LogDebug("********cancelling plot due to high disk activity");
+                _logger.LogDebug($"********{e.Disk} - cancelling plot due to high disk activity");
 
                 bus.GetEvent<PubSubEvent<HighDiskActivityNotification>>().Unsubscribe(OnHighDiskUtilization);
 
                 cancelDueToInvalidPlottingState.Cancel();
             }
 
-            void OnInsufficentPlotSpace(InsufficientPlotSpaceNotification e)
+            void OnInsufficientPlotSpace(InsufficientPlotSpaceNotification e)
             {
-                _logger.LogDebug("********cancelling plot due to insufficent plot space");
+                _logger.LogDebug($"********{e.Disk} - cancelling plot due to insufficient plot space");
 
-                bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Unsubscribe(OnInsufficentPlotSpace);
+                bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Unsubscribe(OnInsufficientPlotSpace);
 
                 cancelDueToInvalidPlottingState.Cancel();
             }
 
-            void OnDiskPlotCompleted(DiskPlotCompleteNotfication e)
+            void OnCompletedPlotFile(CompletedPlotFileNotification e)
             {
                 DestroyCancellationMonitor();
             }
 
             bus.Subscribe<HighDiskActivityNotification>(OnHighDiskUtilization, e => e.Disk == disk);
-            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficentPlotSpace, ThreadOption.PublisherThread, true, e => e.Disk == disk);
-            bus.GetEvent<PubSubEvent<DiskPlotCompleteNotfication>>().Subscribe(OnDiskPlotCompleted, ThreadOption.PublisherThread, true, e => e.Disk == disk);
+            bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficientPlotSpace, ThreadOption.PublisherThread, true, e => e.Disk == disk);
+            bus.GetEvent<PubSubEvent<CompletedPlotFileNotification>>().Subscribe(OnCompletedPlotFile, ThreadOption.PublisherThread, true, e => e.Disk == disk);
 
             cancelPlotting.Token.Register(() => DestroyCancellationMonitor());
 
@@ -308,7 +388,7 @@ namespace ShareCash
 
         private static void OnInsufficientDiskSpace(InsufficientPlotSpaceNotification e)
         {
-           DeletePlotFilesUntilFreeSpaceAboveMinimum(e.Disk);
+           _ = DeletePlotFilesUntilFreeSpaceAboveMinimumAsync(e.Disk);
         }
 
         public static void Run(CancellationToken stoppingToken)
@@ -317,12 +397,22 @@ namespace ShareCash
             var fixedDrives = DriveInfo.GetDrives().Where(drive => drive.DriveType == DriveType.Fixed).ToArray();
 
              try
-            {
+             {
+                 _ = RunCpuMonitorAsync(stoppingToken);
                 RunAvailablePlotSpaceMonitor(fixedDrives, bus, stoppingToken);
                 RunInsufficientPlotSpaceMonitor(fixedDrives, bus, stoppingToken);
                 _ = RunHighDiskUtilizationMonitorAsync(fixedDrives, bus, stoppingToken);
                 RunDriveUnavailableForMiningMonitor(bus);
                 RunMineRestartMonitor(bus);
+
+                async void OnPlotSpaceAvailable(AvailablePlotSpaceNotification e)
+                {
+                    bus.Unsubscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable);
+
+                    await EnsureDiskPlotAsync(e.Disk, bus, stoppingToken);
+
+                    bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, newNotification => newNotification.Disk == e.Disk);
+                }
 
                 bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficientDiskSpace, ThreadOption.BackgroundThread);
 
@@ -331,17 +421,13 @@ namespace ShareCash
                 // plot each drive in case the plot did not complete
                 foreach (var fixedDrive in fixedDrives)
                 {
-                    _ = Task.Run(async () => 
+                    _ = Task.Run(async () =>
                     {
-                        await InitialDiskPlotAsync(fixedDrive, bus, stoppingToken);
+                        await EnsureDiskPlotAsync(fixedDrive, bus, stoppingToken);
 
                         RunPlotAvailabilityMonitor(fixedDrive, bus);
 
-                        bus.GetEvent<PubSubEvent<DiskAvailableForPlottingNotification>>().Subscribe(
-                            e => _ = PlotDiskAsync(fixedDrive, bus, GetPlotCancellationToken(fixedDrive, bus, stoppingToken)),
-                            ThreadOption.PublisherThread,
-                            true,
-                            e => e.Disk == fixedDrive);
+                        bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, e => e.Disk == fixedDrive);
                     });
                 }
             }
@@ -351,7 +437,7 @@ namespace ShareCash
             }
         }
 
-        private static async Task InitialDiskPlotAsync(DriveInfo disk, EventAggregator bus, CancellationToken stoppingToken)
+        private static async Task EnsureDiskPlotAsync(DriveInfo disk, EventAggregator bus, CancellationToken stoppingToken)
         {
             Task plotTask = null;
 
@@ -359,52 +445,73 @@ namespace ShareCash
             {
                 try
                 {
-                    _logger.LogDebug($"{nameof(InitialDiskPlotAsync)} - {disk.Name}: waiting for low disk activity...");
-                    await WaitForLowDiskActivityAsync(disk, bus);
-                    _logger.LogDebug($"{nameof(InitialDiskPlotAsync)} - {disk.Name}: low disk activity.");
+                    var plotDirectory = GetPlotDirectory(disk);
+                    if (!Directory.Exists(plotDirectory))
+                    {
+                        Directory.CreateDirectory(plotDirectory);
+                    }
 
-                    _logger.LogDebug($"{nameof(InitialDiskPlotAsync)} - {disk.Name}: starting initial plot...");
-                    plotTask = PlotDiskAsync(disk, bus, GetPlotCancellationToken(disk, bus, stoppingToken));
+                    // create plot cache directory if it does not exist
+                    var plotCacheDirectory = GetIncompletePlotsDirectory(disk);
+                    if (!Directory.Exists(plotCacheDirectory))
+                    {
+                        Directory.CreateDirectory(plotCacheDirectory);
+                    }
+
+                    _logger.LogDebug($"{nameof(EnsureDiskPlotAsync)} - {disk.Name}: starting initial plot...");
+                    plotTask = PlotDiskAsync(disk, bus, stoppingToken);
                     await plotTask;
                 }
                 catch (TaskCanceledException) { }
                 catch (Exception e) 
                 {
-                    _logger.LogError(e, $"Error during initial plot:  {disk.Name}");
+                    _logger.LogError(e, $"Error during ensured plot:  {disk.Name}");
                 }
             }
             while (!stoppingToken.IsCancellationRequested && (plotTask == null || !plotTask.IsCompletedSuccessfully));
 
-            _logger.LogDebug($"{nameof(InitialDiskPlotAsync)} - {disk.Name}: initial plot done.");
-        }
-
-        private static Task WaitForLowDiskActivityAsync(DriveInfo disk, EventAggregator bus)
-        {
-            var t = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            void OnLowDiskActivity(LowDiskActivityNotification e)
-            {
-                bus.Unsubscribe<LowDiskActivityNotification>(OnLowDiskActivity);
-
-                t.SetResult(null);
-            }
-
-            bus.Subscribe<LowDiskActivityNotification>(OnLowDiskActivity, e => e.Disk == disk);
-
-            return t.Task;
+            _logger.LogDebug($"{nameof(EnsureDiskPlotAsync)} - {disk.Name}: ensured plot done.");
         }
 
         private static async Task<DriveInfo> PlotDiskAsync(DriveInfo disk, EventAggregator bus, CancellationToken stoppingToken)
         {
-            bus.GetEvent<PubSubEvent<PlottingInProgressNotfication>>().Publish(new PlottingInProgressNotfication(disk));
+            _logger.LogDebug($"***************{nameof(PlotDiskAsync)} - {disk.Name} - {Environment.StackTrace}");
+
+            var completedPlotFileNames = Directory.GetFiles(GetPlotDirectory(disk)).Select(completedPlotFilePath => Path.GetFileName(completedPlotFilePath)).ToArray();
+            var incompletePlotFileNames = Directory.GetFiles(GetIncompletePlotsDirectory(disk)).Select(incompletePlotFilePath => Path.GetFileName(incompletePlotFilePath));
+            var duplicatePlotFileNames = completedPlotFileNames.Intersect(incompletePlotFileNames);
+            var unfinishedPlotFiles =
+                Directory.GetFiles(GetIncompletePlotsDirectory(disk))
+                    .OrderBy(plotFile => long.Parse(plotFile.Split('_')[PlotFileNameStartingNonceIndex]));
+
+            // Delete duplicate plots
+            foreach (var duplicatePlotFileName in duplicatePlotFileNames)
+            {
+                File.Delete(Path.Combine(GetPlotDirectory(disk), duplicatePlotFileName));    
+            }
+
+            // notify of completed plots
+            if (completedPlotFileNames.Any())
+            {
+                bus.Publish(new CompletedPlotFileNotification(disk));
+            }
+
+            // wait for low disk activity
+            _logger.LogDebug($"***************{nameof(PlotDiskAsync)} - {disk.Name} - waiting for low disk activity");
+            await WaitForLowDiskActivityAsync(disk, bus, stoppingToken);
+            _logger.LogDebug($"***************{nameof(PlotDiskAsync)} - {disk.Name} - notified of low disk activity");
+
+            // complete unfinished plots
+            foreach (var unfinishedPlotFile in unfinishedPlotFiles)
+            {
+                await ReplotFileAsync(disk, unfinishedPlotFile, bus, stoppingToken);
+            }
 
             // plot big files
-            await PlotFilesOfSizeAsync(disk, GetBigPlotSize(disk), stoppingToken);
+            await PlotFilesOfSizeAsync(disk, GetBigPlotSize(disk), bus, stoppingToken);
 
             // plot small files
-            await PlotFilesOfSizeAsync(disk, GetSmallPlotSize(disk), stoppingToken);
-
-            bus.GetEvent<PubSubEvent<DiskPlotCompleteNotfication>>().Publish(new DiskPlotCompleteNotfication(disk));
+            await PlotFilesOfSizeAsync(disk, GetSmallPlotSize(disk), bus, stoppingToken);
 
             return disk;
         }
@@ -415,56 +522,87 @@ namespace ShareCash
 
         public static long GetMinFreeDiskSpace(DriveInfo disk) => disk.TotalSize * 15/100;
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="diskToPlot"></param>
-        /// <param name="plotFileSize"></param>
-        /// <param name="stopPlottingToken"></param>
-        private static async Task PlotFilesOfSizeAsync(DriveInfo diskToPlot, long plotFileSize, CancellationToken stopPlottingToken)
+        private static async Task ReplotFileAsync(DriveInfo diskToPlot, string plotFile, EventAggregator bus, CancellationToken stopPlottingToken)
         {
-            var expectedFreeDiskSpace = diskToPlot.AvailableFreeSpace - plotFileSize;
+            var numberOfNonces = long.Parse(plotFile.Split('_')[PlotFileNameNumberOfNoncesIndex]);
+            var startingNonce = long.Parse(plotFile.Split('_')[PlotFileNameStartingNonceIndex]);
+            var memoryGb = Math.Max(Process.GetProcesses().Max(process => process.PeakWorkingSet64) / 1024 / 1024 / 1024, 1);
 
-            // create plot directory if it does not exist
-            var plotDirectory = GetPlotDirectory(diskToPlot);
-            if (!Directory.Exists(plotDirectory))
+            var expectedFreeDiskSpace = diskToPlot.AvailableFreeSpace - (numberOfNonces * NonceSize - new FileInfo(plotFile).Length);
+
+            // delete file if it will causes us to go under the minimum free disk space
+            if (expectedFreeDiskSpace <= GetMinFreeDiskSpace(diskToPlot))
             {
-                Directory.CreateDirectory(plotDirectory);
+                File.Delete(plotFile);
             }
-
-            // re-plot existing plot files, in case any are corrupt or incomplete
-            foreach (var existingPlotFile in Directory.GetFiles(plotDirectory))
+            else
             {
-                var numberOfNonces = long.Parse(existingPlotFile.Split('_')[PlotFileNameNumberOfNoncesIndex]);
-                var startingNonce = long.Parse(existingPlotFile.Split('_')[PlotFileNameNonceIndex]);
-                var memoryGb = Math.Max(Process.GetProcesses().Max(process => process.PeakWorkingSet64) / 1024 / 1024 / 1024, 1);
+                var inProgressPlotFile = Path.Combine(GetIncompletePlotsDirectory(diskToPlot), Path.GetFileName(plotFile));
+                var completedPlotFile = Path.Combine(GetPlotDirectory(diskToPlot), Path.GetFileName(plotFile));
 
+                // move file to plot cache directory
+                File.Move(plotFile, inProgressPlotFile);
+
+                // plot
                 await BurstCoinMiner.QueuePlotAsync(
                     diskToPlot,
                     ShareCashAccountNumber,
                     numberOfNonces,
                     startingNonce,
-                    GetPlotDirectory(diskToPlot),
-                    Environment.ProcessorCount,
+                    GetIncompletePlotsDirectory(diskToPlot),
+                    GetNumberOfThreadsPerPlot(),
                     memoryGb,
-                    stopPlottingToken);
+                    GetPlotCancellationToken(diskToPlot, bus, stopPlottingToken));
+
+                // move plotted file to plot directory
+                try
+                {
+                    File.Move(inProgressPlotFile, completedPlotFile);
+                }
+                catch (Exception e)
+                {
+                    throw;
+                }
+
+                // notify of plot completion
+                bus.Publish(new CompletedPlotFileNotification(diskToPlot));
             }
+        }
+
+        private static async Task PlotFilesOfSizeAsync(DriveInfo diskToPlot, long plotFileSize, EventAggregator bus, CancellationToken stopPlottingToken)
+        {
+            var expectedFreeDiskSpace = diskToPlot.AvailableFreeSpace - plotFileSize;
 
             // plot until we exceed the minimum disk space limit
             while (!stopPlottingToken.IsCancellationRequested && expectedFreeDiskSpace > GetMinFreeDiskSpace(diskToPlot))
             {
                 var nextStartingNonce = GetLastCompletedNonce(diskToPlot) + 1 ?? GetRandomStartingNonce();
                 var memoryGb = Math.Max(Process.GetProcesses().Max(process => process.PeakWorkingSet64) / 1024 / 1024 / 1024, 1);
+                var numberOfNonces = plotFileSize / NonceSize;
+                var plotFileName = $"{ShareCashAccountNumber}_{nextStartingNonce}_{numberOfNonces}";
 
                 await BurstCoinMiner.QueuePlotAsync(
                     diskToPlot,
                     ShareCashAccountNumber,
-                    plotFileSize / NonceSize,
+                    numberOfNonces,
                     nextStartingNonce,
-                    GetPlotDirectory(diskToPlot),
-                    Environment.ProcessorCount,
+                    GetIncompletePlotsDirectory(diskToPlot),
+                    GetNumberOfThreadsPerPlot(),
                     memoryGb,
-                    stopPlottingToken);
+                    GetPlotCancellationToken(diskToPlot, bus, stopPlottingToken));
+
+                // move plotted file to plot directory
+                try
+                {
+                    File.Move(Path.Combine(GetIncompletePlotsDirectory(diskToPlot), plotFileName), Path.Combine(GetPlotDirectory(diskToPlot), plotFileName));
+                }
+                catch (Exception e)
+                {
+                    throw;
+                }
+
+                // notify of plot completion
+                bus.Publish(new CompletedPlotFileNotification(diskToPlot));
 
                 expectedFreeDiskSpace = diskToPlot.AvailableFreeSpace - plotFileSize;
             }
@@ -475,7 +613,6 @@ namespace ShareCash
             var baseConfig = Resource1.config_base;
             var yaml = new YamlStream();
             using var reader = new StringReader(baseConfig);
-            var finalConfigPath = Path.GetTempFileName();
             var serializer = new Serializer();
             var plotPaths = drivesToMine.Select(GetPlotDirectory);
 
@@ -490,7 +627,7 @@ namespace ShareCash
                 plotDirectories.Add(new YamlScalarNode(plotPath) { Style = ScalarStyle.SingleQuoted });
             }
 
-            await using (var writer = new StreamWriter(finalConfigPath))
+            await using (var writer = new StreamWriter(MineConfigFile))
             {
                 serializer.Serialize(writer, yaml.Documents[0].RootNode);
             }
@@ -500,13 +637,13 @@ namespace ShareCash
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = $@"{Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)}\chocolatey\lib\scavenger\scavenger.exe",
-                    Arguments = $"--config {finalConfigPath}",
+                    Arguments = $"--config {MineConfigFile}",
                     RedirectStandardOutput = true,
                     CreateNoWindow = true
                 }
             };
 
-            _logger.LogInformation($"Starting mine with config '{finalConfigPath}'");
+            _logger.LogInformation($"Starting mine with config '{MineConfigFile}'");
 
             _logger.LogDebug($"********************starting mining - {cancelMiningToken.GetHashCode()}");
 
@@ -532,53 +669,58 @@ namespace ShareCash
             }
         }
 
+        private static int GetNumberOfThreadsPerPlot() => Math.Max(1, (int)((1.0f - _currentCpuUtilization/100.0f) * Environment.ProcessorCount));
+
         private static string GetPlotDirectory(DriveInfo diskInfo) => $@"{diskInfo.Name}\{AppDirectoryName}\plots";
 
-        private static long GetRandomStartingNonce() => new Random().Next(0, (int) (TargetPoolCapacity / AverageIndividualCapacity));
+        private static string GetIncompletePlotsDirectory(DriveInfo diskInfo) => $@"{diskInfo.Name}\{AppDirectoryName}\IncompletePlots";
+
+        private static long GetRandomStartingNonce() => new Random().Next(0, (int) (TargetPoolCapacity / AverageMinerCapacity));
 
         private static long? GetLastCompletedNonce(DriveInfo diskInfo)
         {
             long? lastCompletedNonce = null;
 
-            var newestPlotFile = GetNewestPlotFile(diskInfo);
+            var newestPlotFile = GetNewestPlotFile(GetPlotDirectory(diskInfo));
             
             if(newestPlotFile != null)
             {
                 var newestPlotFileComponents = newestPlotFile.Split('_');
-                lastCompletedNonce = long.Parse(newestPlotFileComponents[PlotFileNameNonceIndex]) + long.Parse(newestPlotFileComponents[PlotFileNameNumberOfNoncesIndex]) - 1;
+                lastCompletedNonce = long.Parse(newestPlotFileComponents[PlotFileNameStartingNonceIndex]) + long.Parse(newestPlotFileComponents[PlotFileNameNumberOfNoncesIndex]) - 1;
             }
 
             return lastCompletedNonce;
         }
         
-        private static string GetNewestPlotFile(DriveInfo diskInfo)
+        private static string GetNewestPlotFile(string directoryPath)
         {
             string newestPlotFile = null;
             
-            var plotFiles = Directory.GetFiles(GetPlotDirectory(diskInfo));
+            var plotFiles = Directory.GetFiles(directoryPath);
 
             if (plotFiles.Any())
             {
-                var largestStartingNonce = plotFiles.Max(plotFile => long.Parse(plotFile.Split('_')[PlotFileNameNonceIndex])).ToString();
+                var largestStartingNonce = plotFiles.Max(plotFile => long.Parse(plotFile.Split('_')[PlotFileNameStartingNonceIndex])).ToString();
                 newestPlotFile = plotFiles.FirstOrDefault(plotFile => plotFile.Contains($"_{largestStartingNonce}_"));
             }
 
             return newestPlotFile;
         }
 
-        private static void DeletePlotFilesUntilFreeSpaceAboveMinimum(DriveInfo diskInfo)
+        private static async Task DeletePlotFilesUntilFreeSpaceAboveMinimumAsync(DriveInfo diskInfo)
         {
             string newestPlotFile;
 
-            while (diskInfo.AvailableFreeSpace < GetMinFreeDiskSpace(diskInfo) && (newestPlotFile = GetNewestPlotFile(diskInfo)) != null)
+            while (diskInfo.AvailableFreeSpace < GetMinFreeDiskSpace(diskInfo) && (newestPlotFile = (GetNewestPlotFile(GetIncompletePlotsDirectory(diskInfo)) ?? GetNewestPlotFile(GetPlotDirectory(diskInfo)))) != null)
             {
                 try
                 {
                     File.Delete(newestPlotFile);
+                    await Task.Delay(5000);
                 }
                 catch (Exception e)
                 {
-                    _logger.LogError(e, "Failed to delete pot file.");
+                    _logger.LogError(e, "Failed to delete plot file.");
                 }
             }
         }
@@ -593,9 +735,9 @@ namespace ShareCash
             bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, true);
         }
 
-        private static void Subscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler, Predicate<TPayload> filter)
+        private static SubscriptionToken Subscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler, Predicate<TPayload> filter)
         {
-            bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, ThreadOption.PublisherThread, true, filter);
+            return bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, ThreadOption.PublisherThread, true, filter);
         }
 
         private static void Unsubscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler)
@@ -623,19 +765,9 @@ namespace ShareCash
             public DriveInfo Disk { get; }
         }
 
-        private class DiskPlotCompleteNotfication
+        private class CompletedPlotFileNotification
         {
-            public DiskPlotCompleteNotfication(DriveInfo disk)
-            {
-                this.Disk = disk;
-            }
-
-            public DriveInfo Disk { get; }
-        }
-
-        private class PlottingInProgressNotfication
-        {
-            public PlottingInProgressNotfication(DriveInfo disk)
+            public CompletedPlotFileNotification(DriveInfo disk)
             {
                 this.Disk = disk;
             }

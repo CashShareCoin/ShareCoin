@@ -48,15 +48,11 @@ namespace ShareCoin
             var installScriptPath = Path.Combine(resourceDirectory, "installChocolatey.bat");
             var psScriptPath = Path.Combine(resourceDirectory, "install.ps1");
             var script = Installer.Resource1.installChocolatey.Replace(@".\install.ps1", $@"""{psScriptPath}""");
-            var xplotterPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.xplotter_1_31_0).Replace('_', '.')}.nupkg");
-            var scavengerPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.scavenger_1_7_8).Replace('_', '.')}.nupkg");
-            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_3).Replace('_', '.')}.nupkg");
+            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_4).Replace('_', '.')}.nupkg");
 
             File.WriteAllText(installScriptPath, script);
             File.WriteAllText(psScriptPath, Installer.Resource1.install);
-            File.WriteAllBytes(xplotterPackagePath, Installer.Resource1.xplotter_1_31_0);
-            File.WriteAllBytes(scavengerPackagePath, Installer.Resource1.scavenger_1_7_8);
-            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_3);
+            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_4);
 
             using var chocolateyInstallProc = new Process
             {
@@ -80,7 +76,7 @@ namespace ShareCoin
 
             await Task.Run(() => chocolateyInstallProc.WaitForExit());
 
-            await this.OutputUpdateAsync($"Installed Chocolatey. {Environment.NewLine} Installing ShareCoin...");
+            await this.OutputUpdateAsync($"Installed Chocolatey. {Environment.NewLine} Installing ShareCash...");
 
             using var shareCoinInstallProc = new Process
             {

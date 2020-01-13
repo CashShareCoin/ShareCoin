@@ -124,13 +124,7 @@
   <data name="installChocolatey" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>Resources\installChocolatey.bat;System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089;Windows-1252</value>
   </data>
-  <data name="scavenger_1_7_8" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>Resources\scavenger.1.7.8.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="sharecash_0_2_3" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>Resources\sharecash.0.2.3.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
-  </data>
-  <data name="xplotter_1_31_0" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>Resources\xplotter.1.31.0.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  <data name="sharecash_0_2_4" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>Resources\sharecash.0.2.4.nupkg;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
 </root>

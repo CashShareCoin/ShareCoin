@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
-    <Exec Command="powershell -ExecutionPolicy Unrestricted $(ProjectDir)\..\createShareCashPackage.ps1&#xD;&#xA;&#xD;&#xA;copy $(ProjectDir)\..\devops\xplotter\*.nupkg $(ProjectDir)\Resources&#xD;&#xA;copy $(ProjectDir)\..\devops\scavenger\*.nupkg $(ProjectDir)\Resources&#xD;&#xA;copy $(ProjectDir)\..\devops\dotnetcore-desktop-runtime.install\*.nupkg $(ProjectDir)\Resources&#xD;&#xA;copy $(ProjectDir)\..\devops\sharecash\*.nupkg $(ProjectDir)\Resources" />
+    <Exec Command="powershell -ExecutionPolicy Unrestricted $(ProjectDir)\..\createShareCashPackage.ps1&#xD;&#xA;&#xD;&#xA;copy $(ProjectDir)\..\devops\sharecash\*.nupkg $(ProjectDir)\Resources" />
   </Target>
 
 </Project>
