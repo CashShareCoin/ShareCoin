@@ -1,8 +1,9 @@
 push-location
 
 & "$PSScriptRoot\createShareCashPackage.ps1"
+& "$PSScriptRoot\createDevPackages.ps1"
 
-choco install -y virtualbox --version 6.0.14
+choco install -y virtualbox --version 6.0.16
 choco upgrade -y git vagrant
 
 $chocoTestDir = "$PSScriptRoot\..\chocolatey-test-environment"
@@ -52,8 +53,9 @@ foreach ($package in $packages)
 	
 	$exitCode = $LASTEXITCODE
 
-	Write-Host "Exit code was $exitCode"
+	Write-Host "$package exit code was $exitCode"
 	if ($validExitCodes -notcontains $exitCode) {
+	  pop-location
 	  Exit 1
 	}
 }

@@ -1,0 +1,10 @@
+﻿
+VERIFICATION
+Verification is intended to assist the Chocolatey moderators and community
+in verifying that this package's contents are trustworthy.
+ 
+SHA512: E7FFA2D395F08A9A24DA0FD77D6F6C2BDA334B0154D5DB8EAD87C48FC04CE5693B25A5AE660AF81A44CEC449A7639C41F8F35CEFF79BB1355DE7EA876B5BD5E1
+
+To verify hash, in PowerShell invoke
+
+$(get-filehash sharecash.zip sha512).hash

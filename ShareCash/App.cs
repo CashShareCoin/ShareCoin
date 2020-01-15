@@ -283,6 +283,8 @@ namespace ShareCash
                     disksToMine = disksToMine.Union(new[] { e.Disk }).ToArray();
                 }
 
+                _logger.LogDebug($"mining disks: {disksToMine.Select(d => d.Name).Aggregate((disks, next) => $"{disks}, {next}")}");
+
                 bus.GetEvent<PubSubEvent<RestartMiningNotification>>().Publish(new RestartMiningNotification(disksToMine));
             }
 
@@ -386,11 +388,6 @@ namespace ShareCash
             return cancelMining.Token;
         }
 
-        private static void OnInsufficientDiskSpace(InsufficientPlotSpaceNotification e)
-        {
-           _ = DeletePlotFilesUntilFreeSpaceAboveMinimumAsync(e.Disk);
-        }
-
         public static void Run(CancellationToken stoppingToken)
         {
             var bus = new EventAggregator();
@@ -411,10 +408,22 @@ namespace ShareCash
 
                     await EnsureDiskPlotAsync(e.Disk, bus, stoppingToken);
 
-                    bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, newNotification => newNotification.Disk == e.Disk);
+                    bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, ThreadOption.BackgroundThread, newNotification => newNotification.Disk == e.Disk);
                 }
 
-                bus.GetEvent<PubSubEvent<InsufficientPlotSpaceNotification>>().Subscribe(OnInsufficientDiskSpace, ThreadOption.BackgroundThread);
+                async void OnInsufficientDiskSpace(InsufficientPlotSpaceNotification e)
+                {
+                    // delete plot files to free up minimum required free space
+                    await DeletePlotFilesUntilFreeSpaceAboveMinimumAsync(e.Disk);
+
+                    // restart mining if any plot files left
+                    if (Directory.GetFiles(GetPlotDirectory(e.Disk)).Any())
+                    {
+                        bus.Publish(new CompletedPlotFileNotification(e.Disk));
+                    }
+                }
+
+                bus.Subscribe<InsufficientPlotSpaceNotification>(OnInsufficientDiskSpace, ThreadOption.BackgroundThread);
 
                 StartMonitoredMining(bus, stoppingToken);
 
@@ -427,7 +436,7 @@ namespace ShareCash
 
                         RunPlotAvailabilityMonitor(fixedDrive, bus);
 
-                        bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, e => e.Disk == fixedDrive);
+                        bus.Subscribe<AvailablePlotSpaceNotification>(OnPlotSpaceAvailable, ThreadOption.BackgroundThread, e => e.Disk == fixedDrive);
                     });
                 }
             }
@@ -735,9 +744,19 @@ namespace ShareCash
             bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, true);
         }
 
+        private static void Subscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler, ThreadOption threadOption)
+        {
+            bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, threadOption, true);
+        }
+
         private static SubscriptionToken Subscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler, Predicate<TPayload> filter)
         {
-            return bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, ThreadOption.PublisherThread, true, filter);
+            return bus.Subscribe(handler, ThreadOption.PublisherThread, filter);
+        }
+
+        private static SubscriptionToken Subscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler, ThreadOption threadOption, Predicate<TPayload> filter)
+        {
+            return bus.GetEvent<PubSubEvent<TPayload>>().Subscribe(handler, threadOption, true, filter);
         }
 
         private static void Unsubscribe<TPayload>(this EventAggregator bus, Action<TPayload> handler)

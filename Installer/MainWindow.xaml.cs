@@ -48,11 +48,11 @@ namespace ShareCoin
             var installScriptPath = Path.Combine(resourceDirectory, "installChocolatey.bat");
             var psScriptPath = Path.Combine(resourceDirectory, "install.ps1");
             var script = Installer.Resource1.installChocolatey.Replace(@".\install.ps1", $@"""{psScriptPath}""");
-            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_4).Replace('_', '.')}.nupkg");
+            var shareCashPackagePath = Path.Combine(resourceDirectory, $"{nameof(Installer.Resource1.sharecash_0_2_5).Replace('_', '.')}.nupkg");
 
             File.WriteAllText(installScriptPath, script);
             File.WriteAllText(psScriptPath, Installer.Resource1.install);
-            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_4);
+            File.WriteAllBytes(shareCashPackagePath, Installer.Resource1.sharecash_0_2_5);
 
             using var chocolateyInstallProc = new Process
             {

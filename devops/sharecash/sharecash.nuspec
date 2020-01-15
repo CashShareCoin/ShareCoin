@@ -2,19 +2,19 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>sharecash</id>
-    <version>0.2.4</version>
+    <version>0.2.5</version>
     <packageSourceUrl>https://github.com/CashShareCoin/ShareCoin</packageSourceUrl>
     <owners>Jerome Bell</owners>
     <title>ShareCash</title>
     <authors>Jerome Bell</authors>
-    <projectUrl>https://github.com/CashShareCoin/ShareCoin</projectUrl>
+    <projectUrl>https://www.sharecash.io/</projectUrl>
     <copyright>Copyright (c) 2020</copyright>
     <licenseUrl>https://raw.githubusercontent.com/CashShareCoin/ShareCoin/master/LICENSE</licenseUrl>
     <projectSourceUrl>https://github.com/CashShareCoin/ShareCoin</projectSourceUrl>
     <tags>sharecash cryptocurrency</tags>
     <summary>ShareCash is a cryptocurrency with automated wealth redistribution.</summary>
     <description>ShareCash is a cryptocurrency with automated wealth redistribution. This means, whenever there is a concentration of money beyond a certain threshold, a computer is going to automatically reset everyone's account balance to have the same exact amount.</description>
-    <releaseNotes>Fixed excessive re-plotting; Simultaneous disk mining and plotting;</releaseNotes>
+    <releaseNotes>Fixed bug where mining does not restart after deleting plot files;</releaseNotes>
     <dependencies>
       <dependency id="xplotter" version="1.31.0" />
       <dependency id="scavenger" version="1.7.8" />
