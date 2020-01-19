@@ -11,9 +11,8 @@
 }
 
 $packageFolder = $env:ChocolateyPackageFolder
-$hash = $(get-filehash -path $packageFolder\tools\sharecash.zip -algorithm sha256).Hash
 
-Install-ChocolateyZipPackage -packagename ShareCash -unziplocation c:\ShareCash  -Url $packageFolder\tools\sharecash.zip -checksum $hash -checksumtype 'sha256'
+Install-ChocolateyZipPackage -packagename ShareCash -unziplocation c:\ShareCash  -Url $packageFolder\tools\sharecash.zip
 
 # Create & start ShareCash service
 new-service -name ShareCash -BinaryPathName "C:\ShareCash\ShareCash.exe"
